@@ -16,6 +16,7 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <string.h>
 
 
 #include <X11/Xlib.h>
@@ -372,23 +373,34 @@ static int session_sp_cmd_send_file(const char * filename)
     int iPayload;
     int filesize;
     int nRead;
+    int lenFilename;
     FILE * fp = fopen(filename, "rb");
 
     if (!fp) {
-        fprintf(stderr, "file not found: %s\n", filename);
+        fprintf(stderr, "file not found: [%s]\n", filename);
         return -1;
     }
 
+    lenFilename = strlen(filename);
     fseek(fp, 0L, SEEK_END);
     filesize = ftell(fp);
     fseek(fp, 0L, SEEK_SET);
 
     iPayload = 0;
     buf[iPayload++] = SP_FILE_SEND;
-    buf[iPayload++] = ((filesize >>  0) & 0x0FF);
-    buf[iPayload++] = ((filesize >>  8) & 0x0FF);
-    buf[iPayload++] = ((filesize >> 16) & 0x0FF);
-    buf[iPayload++] = ((filesize >> 24) & 0x0FF);
+    buf[iPayload++] = 0;
+    buf[iPayload++] = 0;
+    buf[iPayload++] = 0;
+    buf[iPayload++] = 0;
+    //strcpy(buf + iPayload, filename);
+    memcpy(buf + iPayload, filename, lenFilename + 1);
+    iPayload += lenFilename + 1;       // 1 means null terminator
+    filesize += lenFilename + 1 + 5;   // 5 means header size
+    buf[1] = ((filesize >>  0) & 0x0FF);
+    buf[2] = ((filesize >>  8) & 0x0FF);
+    buf[3] = ((filesize >> 16) & 0x0FF);
+    buf[4] = ((filesize >> 24) & 0x0FF);
+
 
     LOG_I("File = %s\n", filename);
     while (!feof(fp)) {
