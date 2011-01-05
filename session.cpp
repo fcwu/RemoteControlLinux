@@ -59,20 +59,21 @@ enum {
     SP_WIN_FOCUS,
     SP_WIN_LIST_ICON,
     SP_FILE_SEND,
+    SP_WEBCAM,
     SP_MAX
 };
 
 class SessionResource
 {
-    public:
-        SessionResource() {}
-        SessionResource(int socket, DBusConnection * conn):
-            Socket(socket), DBusConn(conn)
-        {
-        }
+public:
+    SessionResource() {}
+    SessionResource(int socket, DBusConnection * conn):
+        Socket(socket), DBusConn(conn)
+    {
+    }
 
-        int Socket;
-        DBusConnection * DBusConn;
+    int Socket;
+    DBusConnection * DBusConn;
 };
 
 static const char * g_keyboard_str_map[KEY_MAX - MOUSE_MAX - 1] = {
@@ -88,7 +89,12 @@ static const char * g_keyboard_str_map[KEY_MAX - MOUSE_MAX - 1] = {
 
 #define LOG_I(pcString, ...) \
     do {\
-        fprintf(stderr, "%s(%d): ", __FILE__, __LINE__);\
+        fprintf(stderr, "[INFO] %s(%d) ", __FILE__, __LINE__);\
+        fprintf(stderr, pcString, ## __VA_ARGS__);\
+    } while (0)
+#define LOG_E(pcString, ...) \
+    do {\
+        fprintf(stderr, "[ERROR] %s(%d) ", __FILE__, __LINE__);\
         fprintf(stderr, pcString, ## __VA_ARGS__);\
     } while (0)
 
@@ -132,7 +138,7 @@ static void session_sp_cmd(char *buf)
                     gchar *iterTitle = title_out;
                     if (title_out == 0)
                         continue;
-                    printf("title[%d]: %s, %d\n", iWindow, title_out, iPayload);
+                    LOG_I("title[%d]: %s, %d\n", iWindow, title_out, iPayload);
                     buf[iPayload++] = (char)((unsigned long)client_list[iWindow] >>  0) & 0x0FF;
                     buf[iPayload++] = (char)((unsigned long)client_list[iWindow] >>  8) & 0x0FF;
                     buf[iPayload++] = (char)((unsigned long)client_list[iWindow] >> 16) & 0x0FF;
@@ -156,7 +162,7 @@ static void session_sp_cmd(char *buf)
                     if (icon == 0)
                         continue;
                     iPayload = 0;
-                    printf("icon[%d]: %ld\n", iWindow, icon_len);
+                    LOG_I("icon[%d]: %ld\n", iWindow, icon_len);
                     buf[iPayload++] = SP_WIN_LIST_ICON;
                     buf[iPayload++] = 0;
                     buf[iPayload++] = 0;
@@ -176,7 +182,7 @@ static void session_sp_cmd(char *buf)
                     buf[2] = ((iPayload >>  8) & 0x0FF);
                     buf[3] = ((iPayload >> 16) & 0x0FF);
                     buf[4] = ((iPayload >> 24) & 0x0FF);
-                    printf("icon[%d]: %d\n", iWindow, iPayload);
+                    LOG_I("icon[%d]: %d\n", iWindow, iPayload);
                     //boost::asio::write(*sock, boost::asio::buffer(buf, iPayload));
                     write(g_res.Socket, buf, iPayload);
                     //if (iWindow >= 8)
@@ -196,14 +202,61 @@ static void session_sp_cmd(char *buf)
                 id |= ((int)(buf[3]) & 0x000000FFL) << 16;
                 id |= ((int)(buf[4]) & 0x000000FFL) << 24;
                 snprintf(command, sizeof(command), "wmctrl -a 0x%08X -i", id);
-                std::cout << command << std::endl;
+                LOG_I("%s", command);
+                cout << command << std::endl;
                 system(command);
+            }
+            break;
+        case SP_WEBCAM:
+            {
+                do {
+                    char buf[32768*3]; 
+                    int iPayload;
+                    int filesize;
+                    int nRead;
+                    FILE * fp = fopen("/home/dorowu/devel/motion/motion-3.2.12/pic/lastsnap.jpg", "rb");
+                    //FILE * fp = fopen("/tmp/motion/01-20110102040827-00.jpg", "rb");
+
+                    if (!fp) {
+                        LOG_E("file not found: [%s]\n", "/home/dorowu/devel/motion/motion-3.2.12/lastsnap.jpg");
+                        sleep(1);
+                        continue;
+                    }
+
+                    fseek(fp, 0L, SEEK_END);
+                    filesize = ftell(fp);
+                    fseek(fp, 0L, SEEK_SET);
+
+                    iPayload = 0;
+                    buf[iPayload++] = SP_WEBCAM;
+                    buf[iPayload++] = 0;
+                    buf[iPayload++] = 0;
+                    buf[iPayload++] = 0;
+                    buf[iPayload++] = 0;
+                    iPayload += filesize;
+                    buf[1] = ((iPayload >>  0) & 0x0FF);
+                    buf[2] = ((iPayload >>  8) & 0x0FF);
+                    buf[3] = ((iPayload >> 16) & 0x0FF);
+                    buf[4] = ((iPayload >> 24) & 0x0FF);
+                    iPayload = 5;
+
+
+                    while (!feof(fp)) {
+                        nRead = fread(buf + iPayload, sizeof(char), sizeof(buf) - iPayload, fp);
+                        write(g_res.Socket, buf, iPayload + nRead);
+                        LOG_I("nRead = %d [5] = %d\n", nRead, buf[5]);
+                        iPayload = 0;
+                    }
+
+                    fclose(fp);
+                    break;
+                } while (1);
             }
             break;
     }
 }
 
-static void session_socket()
+static int dispatcher_socket()
 {
     try
     {
@@ -226,23 +279,24 @@ static void session_socket()
 
         if (retval == -1) {
             perror("select()");
-            return;
+            throw ;
         } else if (retval) {
-            //printf("Data is available now.\n");
+            //LOG_I("Data is available now.\n");
             /* FD_ISSET(0, &rfds) will be true. */
         } else {
-            //printf("No data within 1 seconds\n");
-            return;
+            //LOG_I("No data within 1 seconds\n");
+            return 0;
         }
 
 
         size_t length = read(g_res.Socket, buf, sizeof(buf));
-        if (length == 0)
-            return ; // Connection closed cleanly by peer.
-        else if (length < 0)
+        if (length == 0) {
+            throw; // Connection closed cleanly by peer.
+        } else if (length < 0) {
             throw ;
-        else if (length > sizeof(buf))
-            return ;
+        } else if (length > sizeof(buf)) {
+            return 0;
+        }
 
         for (int i = 0; i < length; ++i) {
             cout << boost::format("0x%02X ") % (0x00FF & (int)buf[i]);
@@ -328,7 +382,15 @@ static void session_socket()
     catch (std::exception& e)
     {
         cerr << "Exception in thread: " << e.what() << "\n";
+        return -1;
     }
+    catch (...)
+    {
+        cerr << "Exception in thread: " << "Unknown" << "\n";
+        return -1;
+    }
+
+    return 0;
 }
 
 static void file_send(const char *filename)
@@ -367,7 +429,7 @@ static void file_send(const char *filename)
 
 }
 
-static int session_sp_cmd_send_file(const char * filename)
+static int session_sp_cmd_send_file(int type, const char * filename)
 {
     char buf[32768]; 
     int iPayload;
@@ -377,7 +439,7 @@ static int session_sp_cmd_send_file(const char * filename)
     FILE * fp = fopen(filename, "rb");
 
     if (!fp) {
-        fprintf(stderr, "file not found: [%s]\n", filename);
+        LOG_E("file not found: [%s]\n", filename);
         return -1;
     }
 
@@ -387,7 +449,7 @@ static int session_sp_cmd_send_file(const char * filename)
     fseek(fp, 0L, SEEK_SET);
 
     iPayload = 0;
-    buf[iPayload++] = SP_FILE_SEND;
+    buf[iPayload++] = type;
     buf[iPayload++] = 0;
     buf[iPayload++] = 0;
     buf[iPayload++] = 0;
@@ -413,7 +475,7 @@ static int session_sp_cmd_send_file(const char * filename)
     fclose(fp);
 }
 
-static void session_dbus()
+static void dispatcher_dbus()
 {
     DBusMessage* msg;
     DBusMessageIter args;
@@ -433,13 +495,13 @@ static void session_dbus()
     if (dbus_message_is_signal(msg, "server.file.signal.Type", "send")) {
         // read the parameters
         if (!dbus_message_iter_init(msg, &args)) {
-            fprintf(stderr, "Message has no arguments!\n"); 
+            LOG_E("Message has no arguments!\n"); 
         } else if (DBUS_TYPE_STRING != dbus_message_iter_get_arg_type(&args)) {
-            fprintf(stderr, "Argument is not string!\n"); 
+            LOG_E("Argument is not string!\n"); 
         } else {
             dbus_message_iter_get_basic(&args, &sigvalue);
-            printf("Got Signal with value %s\n", sigvalue);
-            session_sp_cmd_send_file(sigvalue);
+            LOG_I("Got Signal with value %s\n", sigvalue);
+            session_sp_cmd_send_file(SP_FILE_SEND, sigvalue);
         }
     } else {
     }
@@ -456,8 +518,9 @@ void session(int sock, DBusConnection *conn)
 
     for (;;)
     {
-        session_dbus();
-        session_socket();
+        dispatcher_dbus();
+        if (dispatcher_socket() < 0)
+            break;
     }
 
     // close connection
