@@ -3,15 +3,14 @@
 // Name: session.cpp
 // Author: doro_wu@asus.com
 // 
-// Copyright 2010 by Doro Wu. All right reserved
-//
 ///////////////////////////////////////////////////////////////////////////////
+
+#include "session.h"
 
 #include <cstdlib>
 #include <cstdio>
 #include <iostream>
 #include <iomanip>
-#include <boost/format.hpp>
 #include <dbus/dbus.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -21,10 +20,6 @@
 
 #include <X11/Xlib.h>
 #include <glib.h>
-
-using std::cout;
-using std::cerr;
-using std::endl;
 
 const int MAX_LENGTH = 32768;
 
@@ -36,46 +31,6 @@ extern "C" {
 }
 
 
-enum {
-    MOUSE_DIRECTION_UP = 0,
-    MOUSE_DIRECTION_RIGHT,
-    MOUSE_DIRECTION_DOWN,
-    MOUSE_DIRECTION_LEFT,
-    MOUSE_LCLICK,
-    MOUSE_RCLICK,
-    MOUSE_MOVE,
-    MOUSE_MAX,
-    KEY_UP,
-    KEY_RIGHT,
-    KEY_DOWN,
-    KEY_LEFT,
-    KEY_PAGEUP,
-    KEY_PAGEDOWN,
-    KEY_BACKSPACE,
-    KEY_ENTER,
-    KEY_CUSTOM,
-    KEY_MAX,
-    SP_WIN_LIST,
-    SP_WIN_FOCUS,
-    SP_WIN_LIST_ICON,
-    SP_FILE_SEND,
-    SP_WEBCAM,
-    SP_MAX
-};
-
-class SessionResource
-{
-public:
-    SessionResource() {}
-    SessionResource(int socket, DBusConnection * conn):
-        Socket(socket), DBusConn(conn)
-    {
-    }
-
-    int Socket;
-    DBusConnection * DBusConn;
-};
-
 static const char * g_keyboard_str_map[KEY_MAX - MOUSE_MAX - 1] = {
     "Up",
     "Right",
@@ -86,19 +41,6 @@ static const char * g_keyboard_str_map[KEY_MAX - MOUSE_MAX - 1] = {
     "BackSpace",
     "Return"
 };
-
-#define LOG_I(pcString, ...) \
-    do {\
-        fprintf(stderr, "[INFO] %s(%d) ", __FILE__, __LINE__);\
-        fprintf(stderr, pcString, ## __VA_ARGS__);\
-    } while (0)
-#define LOG_E(pcString, ...) \
-    do {\
-        fprintf(stderr, "[ERROR] %s(%d) ", __FILE__, __LINE__);\
-        fprintf(stderr, pcString, ## __VA_ARGS__);\
-    } while (0)
-
-static SessionResource g_res;
 
 static void session_sp_cmd(char *buf) 
 {
@@ -202,7 +144,7 @@ static void session_sp_cmd(char *buf)
                 id |= ((int)(buf[3]) & 0x000000FFL) << 16;
                 id |= ((int)(buf[4]) & 0x000000FFL) << 24;
                 snprintf(command, sizeof(command), "wmctrl -a 0x%08X -i", id);
-                LOG_I("%s", command);
+                LOG_I("%s\n", command);
                 cout << command << std::endl;
                 system(command);
             }
@@ -475,47 +417,9 @@ static int session_sp_cmd_send_file(int type, const char * filename)
     fclose(fp);
 }
 
-static void dispatcher_dbus()
+
+int Session::start()
 {
-    DBusMessage* msg;
-    DBusMessageIter args;
-    char* sigvalue;
-
-    // non blocking read of the next available message
-    dbus_connection_read_write(g_res.DBusConn, 0);
-    msg = dbus_connection_pop_message(g_res.DBusConn);
-
-    // loop again if we haven't read a message
-    if (NULL == msg) { 
-        return;
-    }
-
-    // check if the message is a signal from the correct interface
-    // and with the correct name
-    if (dbus_message_is_signal(msg, "server.file.signal.Type", "send")) {
-        // read the parameters
-        if (!dbus_message_iter_init(msg, &args)) {
-            LOG_E("Message has no arguments!\n"); 
-        } else if (DBUS_TYPE_STRING != dbus_message_iter_get_arg_type(&args)) {
-            LOG_E("Argument is not string!\n"); 
-        } else {
-            dbus_message_iter_get_basic(&args, &sigvalue);
-            LOG_I("Got Signal with value %s\n", sigvalue);
-            session_sp_cmd_send_file(SP_FILE_SEND, sigvalue);
-        }
-    } else {
-    }
-
-    // free the message
-    dbus_message_unref(msg);
-}
-
-
-void session(int sock, DBusConnection *conn)
-{
-    g_res.Socket = sock;
-    g_res.DBusConn = conn;
-
     for (;;)
     {
         dispatcher_dbus();
@@ -526,3 +430,4 @@ void session(int sock, DBusConnection *conn)
     // close connection
     close(sock);
 }
+
